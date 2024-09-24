@@ -4,7 +4,7 @@ local Library = loadstring(game:HttpGet(repo .. 'Library.lua'))()
 local ThemeManager = loadstring(game:HttpGet(repo .. 'addons/ThemeManager.lua'))()
 local SaveManager = loadstring(game:HttpGet(repo .. 'addons/SaveManager.lua'))()
 
--- Create the main window
+-- main window
 local Window = Library:CreateWindow({
 	Title = 'X Hub - 3008',
 	Center = true,
@@ -15,7 +15,7 @@ local Window = Library:CreateWindow({
 	MenuFadeTime = 0.2
 })
 
--- Add watermark for LocalPlayer's FPS and Ping
+-- Add watermark for LocalPlayer fps and ping
 Library:SetWatermarkVisibility(true)
 local function updateWatermark()
 	local fps = math.floor(1 / task.wait())
@@ -34,13 +34,15 @@ local Tabs = {
 local PS = game:GetService("Players")
 local WS = game:GetService("Workspace")
 local RS = game:GetService("RunService")
-local Camera = WS.CurrentCamera
+local UIS = game:GetService("UserInputService")
+local Camera = WS.Camera
 local Player = PS.LocalPlayer
 local LocalizationService = game:GetService("LocalizationService")
 local PlayerCountryCode = LocalizationService:GetCountryRegionForPlayerAsync(Player)
 local PlayerGui = Player:WaitForChild("PlayerGui")
 local Character = Player.Character or Player.CharacterAdded:Wait()
 local Backpack = Player:WaitForChild("Backpack")
+local Humanoid = Character:WaitForChild("Humanoid")
 local HumanoidRoot = Character:WaitForChild("HumanoidRootPart")
 local ItemsFolder = WS:WaitForChild("GameObjects").Physical.Items
 local Storage = PlayerGui:WaitForChild("MainGui").Menus.Inventory
@@ -48,16 +50,17 @@ local Lighting = game:GetService("Lighting")
 local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
 
+
 -- Main Groupboxes
 local ItemGroupBox = Tabs.Main:AddLeftGroupbox('Item Collection')
 local MusicGroupBox = Tabs.Main:AddRightGroupbox('Music')
 local StatsGroupBox = Tabs.Main:AddLeftGroupbox('Player Stats')
+local ServerGroupBox = Tabs.Main:AddRightGroupbox('Server')
 
 -- Variables
 local OldCFrame = HumanoidRoot.CFrame
-local TimesToTeleport = 50
-local Radius = 100
 local Noclipping = nil
+local fov = Camera.FieldOfView
 -- ESP and Tracer Variables
 local espEnabled = false
 local espConnections = {}
@@ -68,6 +71,21 @@ local oldBrightness = Lighting.Brightness
 local oldClockTime = Lighting.ClockTime
 local oldFogEnd = Lighting.FogEnd
 local oldGlobalShadows = Lighting.GlobalShadows
+
+-- Third Person Variables
+local IsThirdPerson = false
+local OriginalCameraType = Camera.CameraType
+local ThirdPersonConnection
+
+-- Function to update camera in third person
+local function UpdateThirdPerson()
+    if IsThirdPerson and Character and Character:FindFirstChild("Humanoid") and Character.Humanoid.Health > 0 then
+        local Head = Character:FindFirstChild("Head")
+        if Head then
+            Camera.CFrame = CFrame.new(Head.Position - Camera.CFrame.LookVector * 10, Head.Position)
+        end
+    end
+end
 
 -- Functions
 local function AutoCollect()
@@ -266,7 +284,7 @@ local autocollectBtn = ItemGroupBox:AddButton({
 	Text = 'Auto Collect items',
 	Tooltip = 'Starts collecting items for you until max.',
 	Func = function()
-		AutoCollect()
+	    AutoCollect()
 	end
 })
 
@@ -280,7 +298,7 @@ local function AddMusicButtons()
 					for _, s in pairs(WS.GameObjects.SoundFolder.GameSoundtrack.StateThemes.DayThemes:GetChildren()) do
 						if s:IsA("Sound") then s:Stop() end
 					end
-					sound.Volume = sound.Volume * 2
+					sound.Volume = 1.5
 					sound:Play()
 				end
 			})
@@ -319,6 +337,34 @@ StatsGroupBox:AddSlider('JumpPower', {
 	end
 })
 
+
+-- Third Person Toggle
+StatsGroupBox:AddToggle('ThirdPerson', {
+    Text = 'Third Person',
+    Default = false,
+    Tooltip = 'Toggle between first and third person view',
+    Callback = function(Value)
+        IsThirdPerson = Value
+        if IsThirdPerson then
+            OriginalCameraType = Camera.CameraType
+            Camera.CameraType = Enum.CameraType.Scriptable
+            ThirdPersonConnection = RS.RenderStepped:Connect(UpdateThirdPerson)
+        else
+            Camera.CFrame = CFrame.new(Camera.CFrame.Position, Camera.CFrame.Position + Camera.CFrame.LookVector)
+            Camera.CameraType = OriginalCameraType
+            if ThirdPersonConnection then
+                ThirdPersonConnection:Disconnect()
+            end
+        end
+    end
+})
+
+-- Update character reference when it changes
+Player.CharacterAdded:Connect(function(NewCharacter)
+    Character = NewCharacter
+    HumanoidRoot = Character:WaitForChild("HumanoidRootPart")
+end)
+
 StatsGroupBox:AddToggle('Fullbright', {
     Text = 'Fullbright',
     Default = false,
@@ -341,7 +387,7 @@ StatsGroupBox:AddToggle('Fullbright', {
 })
 
 StatsGroupBox:AddToggle('PlayerESP', {
-    Text = 'Player ESP',
+    Text = 'Player ESP (Nearest Only)',
     Default = false,
     Tooltip = 'Highlight other players and show tracers',
     Callback = function(Value)
@@ -387,16 +433,58 @@ StatsGroupBox:AddToggle('Noclip', {
     end
 })
 
+StatsGroupBox:AddSlider('FOVSlider', {
+    Text = 'Field of View',
+    Default = Camera.FieldOfView,
+    Min = 30,
+    Max = 170,
+    Rounding = 0,
+    Compact = false,
+    Callback = function(Value)
+        workspace.Camera.FieldOfView = Value
+    end
+})
+
+local removeFdmg = StatsGroupBox:AddButton({
+    Text = 'Remove Fall Damage',
+    Func = function()
+        if Character and Character:FindFirstChild("FallDamage") then
+            Character.FallDamage:Destroy()
+        end
+	Library:Notify('Fall Damage Removed')
+    end
+})
+
+local BunnyHopConnection
+StatsGroupBox:AddToggle('BunnyHop', {
+    Text = 'Bunny Hop (non functional for now)',
+    Default = false,
+    Tooltip = 'Automatically jump',
+    Callback = function(Value)
+        if Value then
+            BunnyHopConnection = game:GetService("RunService").Heartbeat:Connect(function()
+                if Character and Character:FindFirstChild("Humanoid") then
+                    Character.Humanoid.Jump = true
+                end
+            end)
+        else
+            if BunnyHopConnection then
+                BunnyHopConnection:Disconnect()
+            end
+        end
+    end
+})
+
 -- server Hop
 
-local servHop = StatsGroupBox:AddButton({
+local servHop = ServerGroupBox:AddButton({
     Text = 'Server Hop',
     Func = function()
         serverHop()
     end
 })
 -- Rejoin Function
-local rejoinbutton = StatsGroupBox:AddButton({
+local rejoinbutton = ServerGroupBox:AddButton({
     Text = 'Rejoin',
     Tooltip = 'Rejoin server',
     Func = function()
@@ -443,4 +531,8 @@ Library:OnUnload(function()
     for _, tracer in pairs(tracers) do
         tracer:Remove()
     end
+    if ThirdPersonConnection then
+        ThirdPersonConnection:Disconnect()
+    end
+    Camera.CameraType = OriginalCameraType
 end)
